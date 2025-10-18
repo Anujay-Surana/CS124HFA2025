@@ -13,10 +13,11 @@ genderModel = "gender_net.caffemodel"
 genderNet = cv2.dnn.readNetFromCaffe(genderProto, genderModel)
 genderList = ['Male', 'Female']
 
-# Classification model (optional, helps with analysis)
+# Age classification model
 ageProto = "age_deploy.prototxt"
 ageModel = "age_net.caffemodel"
 ageNet = cv2.dnn.readNetFromCaffe(ageProto, ageModel)
+ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
 
 # Body detector
 hog = cv2.HOGDescriptor()
@@ -203,11 +204,23 @@ def detect_faces_and_bodies(frame):
                 gender = genderList[genderPreds[0].argmax()]
                 gender_confidence = genderPreds[0].max()
 
+                # Predict age
+                blob_age = cv2.dnn.blobFromImage(
+                    face_img, 1.0, (227, 227),
+                    MODEL_MEAN_VALUES, swapRB=False
+                )
+                ageNet.setInput(blob_age)
+                agePreds = ageNet.forward()
+                age = ageList[agePreds[0].argmax()]
+                age_confidence = agePreds[0].max()
+
                 # Estimate ethnicity
                 ethnicity, eth_confidence = estimate_ethnicity(face_img)
             else:
                 gender = "Unknown"
                 gender_confidence = 0.0
+                age = "Unknown"
+                age_confidence = 0.0
                 ethnicity = "Unknown"
                 eth_confidence = 0.0
 
@@ -218,14 +231,15 @@ def detect_faces_and_bodies(frame):
             # Prepare text labels
             face_text = f"Face: {confidence * 100:.1f}%"
             gender_text = f"{gender}: {gender_confidence * 100:.1f}%"
+            age_text = f"Age {age}: {age_confidence * 100:.1f}%"
             ethnicity_text = f"{ethnicity}: {eth_confidence * 100:.1f}%"
 
             # Calculate positions for text
             y_offset = startY - 10 if startY - 10 > 10 else startY + 10
 
             # Draw text with background for better visibility
-            texts = [face_text, gender_text, ethnicity_text]
-            colors = [(0, 255, 0), (255, 200, 0), (0, 200, 255)]
+            texts = [face_text, gender_text, age_text, ethnicity_text]
+            colors = [(0, 255, 0), (255, 200, 0), (255, 100, 255), (0, 200, 255)]
 
             for idx, (text, color) in enumerate(zip(texts, colors)):
                 y_pos = y_offset - (len(texts) - idx - 1) * 30
