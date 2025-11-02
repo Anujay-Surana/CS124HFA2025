@@ -350,4 +350,5 @@ else:
     # Release resources
     if cap is not None:
         cap.release()
+        print("Video capture released.")
     cv2.destroyAllWindows()
