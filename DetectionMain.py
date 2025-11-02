@@ -3,19 +3,19 @@ import numpy as np
 import os
 
 # Pre-trained DNN face detector model from OpenCV
-modelFile = "res10_300x300_ssd_iter_140000.caffemodel"
-configFile = "deploy.prototxt"
+modelFile = "opencv_setup/res10_300x300_ssd_iter_140000.caffemodel"
+configFile = "opencv_setup/deploy.prototxt"
 net = cv2.dnn.readNetFromCaffe(configFile, modelFile)
 
 # Gender classification model
-genderProto = "gender_deploy.prototxt"
-genderModel = "gender_net.caffemodel"
+genderProto = "opencv_setup/gender_deploy.prototxt"
+genderModel = "opencv_setup/gender_net.caffemodel"
 genderNet = cv2.dnn.readNetFromCaffe(genderProto, genderModel)
 genderList = ['Male', 'Female']
 
 # Age classification model
-ageProto = "age_deploy.prototxt"
-ageModel = "age_net.caffemodel"
+ageProto = "opencv_setup/age_deploy.prototxt"
+ageModel = "opencv_setup/age_net.caffemodel"
 ageNet = cv2.dnn.readNetFromCaffe(ageProto, ageModel)
 ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
 
