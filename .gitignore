@@ -1,0 +1,15 @@
+venv/
+.venv/
+.DS_Store
+*.pem
+*.key
+*.pub
+*.crt
+*.der
+*.ssh
+id_rsa
+id_rsa.pub
+known_hosts
+.ssh/
+__pycache__/
+recog/output/
