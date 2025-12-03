@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+from collections import deque
 
 # Pre-trained DNN face detector model from OpenCV
 modelFile = "opencv_setup/res10_300x300_ssd_iter_140000.caffemodel"
@@ -26,84 +27,153 @@ hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 # Model mean values for preprocessing
 MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
 
-# Webcam (0 is default camera)
-cap = cv2.VideoCapture(0)
+# Set confidence threshold
+confidence_threshold = 0.5
 
-# Set confidence threshold (70%)
-confidence_threshold = 0.7
+# Temporal smoothing
+face_tracker = {}
+next_face_id = 0
+SMOOTHING_FRAMES = 7
+
+
+class FaceTracker:
+    def __init__(self, face_id):
+        self.id = face_id
+        self.age_history = deque(maxlen=SMOOTHING_FRAMES)
+        self.gender_history = deque(maxlen=SMOOTHING_FRAMES)
+        self.ethnicity_history = deque(maxlen=SMOOTHING_FRAMES)
+        self.last_position = None
+        self.frames_missing = 0
+        
+    def update(self, position, age, gender, ethnicity):
+        self.last_position = position
+        self.age_history.append(age)
+        self.gender_history.append(gender)
+        self.ethnicity_history.append(ethnicity)
+        self.frames_missing = 0
+        
+    def get_smoothed_predictions(self):
+        if len(self.age_history) > 0:
+            age = max(set(self.age_history), key=self.age_history.count)
+            gender = max(set(self.gender_history), key=self.gender_history.count)
+            ethnicity = max(set(self.ethnicity_history), key=self.ethnicity_history.count)
+            return age, gender, ethnicity
+        return "Unknown", "Unknown", "Unknown"
+
+
+def match_face_to_tracker(x, y, w, h):
+    global face_tracker, next_face_id
+    
+    center_x = x + w // 2
+    center_y = y + h // 2
+    
+    min_dist = float('inf')
+    matched_id = None
+    
+    for face_id, tracker in list(face_tracker.items()):
+        if tracker.last_position is not None:
+            tx, ty, tw, th = tracker.last_position
+            tcx = tx + tw // 2
+            tcy = ty + th // 2
+            dist = np.sqrt((center_x - tcx)**2 + (center_y - tcy)**2)
+            
+            if dist < w * 0.6 and dist < min_dist:
+                min_dist = dist
+                matched_id = face_id
+    
+    if matched_id is None:
+        matched_id = next_face_id
+        face_tracker[matched_id] = FaceTracker(matched_id)
+        next_face_id += 1
+    
+    return matched_id
+
+
+def cleanup_trackers():
+    global face_tracker
+    to_remove = []
+    for face_id, tracker in face_tracker.items():
+        tracker.frames_missing += 1
+        if tracker.frames_missing > 30:
+            to_remove.append(face_id)
+    for face_id in to_remove:
+        del face_tracker[face_id]
 
 
 def estimate_ethnicity(face_img):
     """
-    Estimate ethnicity based on facial skin tone analysis.
-    Returns ethnicity category and confidence score.
+    Improved ethnicity estimation
     """
-    if face_img.size == 0:
+    try:
+        if face_img.size == 0 or face_img.shape[0] < 30 or face_img.shape[1] < 30:
+            return "Unknown", 0.0
+
+        face_h, face_w = face_img.shape[:2]
+        
+        # Extract forehead region
+        forehead_top = int(face_h * 0.18)
+        forehead_bottom = int(face_h * 0.48)
+        forehead_left = int(face_w * 0.22)
+        forehead_right = int(face_w * 0.78)
+        
+        forehead = face_img[forehead_top:forehead_bottom, forehead_left:forehead_right]
+        
+        if forehead.size == 0:
+            return "Unknown", 0.0
+        
+        # Color space analysis
+        lab = cv2.cvtColor(forehead, cv2.COLOR_BGR2LAB)
+        ycrcb = cv2.cvtColor(forehead, cv2.COLOR_BGR2YCrCb)
+        
+        L = np.mean(lab[:, :, 0])
+        a = np.mean(lab[:, :, 1])
+        b = np.mean(lab[:, :, 2])
+        
+        Cr = np.mean(ycrcb[:, :, 1])
+        Cb = np.mean(ycrcb[:, :, 2])
+        
+        # Classification with better thresholds
+        if L < 88:
+            ethnicity = "African"
+            confidence = 0.73
+        elif L < 92 and Cr > 145:
+            ethnicity = "African"
+            confidence = 0.68
+        elif L < 135:
+            if Cr > 144:
+                ethnicity = "South Asian"
+                confidence = 0.70
+            elif b > 133 or Cr > 138:
+                ethnicity = "Hispanic/Latino"
+                confidence = 0.66
+            else:
+                ethnicity = "Middle Eastern"
+                confidence = 0.62
+        elif L < 168:
+            if b > 134:
+                ethnicity = "East Asian"
+                confidence = 0.67
+            elif Cr > 137:
+                ethnicity = "Hispanic/Latino"
+                confidence = 0.64
+            else:
+                ethnicity = "Middle Eastern"
+                confidence = 0.60
+        else:
+            if Cb < 118:
+                ethnicity = "Caucasian"
+                confidence = 0.73
+            else:
+                ethnicity = "East Asian"
+                confidence = 0.63
+        
+        return ethnicity, confidence
+        
+    except Exception as e:
         return "Unknown", 0.0
-
-    # Convert to different color spaces for analysis
-    hsv = cv2.cvtColor(face_img, cv2.COLOR_BGR2HSV)
-    ycrcb = cv2.cvtColor(face_img, cv2.COLOR_BGR2YCrCb)
-
-    # Get average values from the face region
-    avg_value = np.mean(hsv[:, :, 2])
-    avg_saturation = np.mean(hsv[:, :, 1])
-    avg_cr = np.mean(ycrcb[:, :, 1])
-    avg_cb = np.mean(ycrcb[:, :, 2])
-
-    # Classification with confidence calculation
-    confidence_scores = []
-    
-    if avg_value < 90:
-        ethnicity = "African"
-        # Calculate confidence based on how well the values fit the category
-        value_confidence = min(1.0, (90 - avg_value) / 30.0 + 0.5)
-        confidence_scores.append(value_confidence)
-    elif avg_value < 130:
-        if avg_cr > 140:
-            ethnicity = "South Asian"
-            value_confidence = min(1.0, (avg_value - 90) / 40.0 + 0.6)
-            cr_confidence = min(1.0, (avg_cr - 140) / 20.0 + 0.6)
-            confidence_scores.extend([value_confidence, cr_confidence])
-        else:
-            ethnicity = "Hispanic/Latino"
-            value_confidence = min(1.0, (avg_value - 90) / 40.0 + 0.6)
-            cr_confidence = min(1.0, (140 - avg_cr) / 20.0 + 0.6)
-            confidence_scores.extend([value_confidence, cr_confidence])
-    elif avg_value < 170:
-        if avg_saturation > 40:
-            ethnicity = "East Asian"
-            value_confidence = min(1.0, (avg_value - 130) / 40.0 + 0.6)
-            sat_confidence = min(1.0, (avg_saturation - 40) / 30.0 + 0.6)
-            confidence_scores.extend([value_confidence, sat_confidence])
-        else:
-            ethnicity = "Middle Eastern"
-            value_confidence = min(1.0, (avg_value - 130) / 40.0 + 0.6)
-            sat_confidence = min(1.0, (40 - avg_saturation) / 30.0 + 0.6)
-            confidence_scores.extend([value_confidence, sat_confidence])
-    else:
-        if avg_cb < 120:
-            ethnicity = "Caucasian"
-            value_confidence = min(1.0, (avg_value - 170) / 30.0 + 0.6)
-            cb_confidence = min(1.0, (120 - avg_cb) / 20.0 + 0.6)
-            confidence_scores.extend([value_confidence, cb_confidence])
-        else:
-            ethnicity = "East Asian"
-            value_confidence = min(1.0, (avg_value - 170) / 30.0 + 0.6)
-            cb_confidence = min(1.0, (avg_cb - 120) / 20.0 + 0.6)
-            confidence_scores.extend([value_confidence, cb_confidence])
-    
-    # Calculate final confidence as average of individual confidence scores
-    confidence = np.mean(confidence_scores) if confidence_scores else 0.5
-    confidence = max(0.3, min(0.95, confidence))  # Clamp between 30% and 95%
-
-    return ethnicity, confidence
 
 
 def get_input_source():
-    """
-    Get input source from user - camera, image file, or video file
-    """
     print("\nChoose input source:")
     print("1. Live Camera")
     print("2. Image File")
@@ -140,124 +210,181 @@ def get_input_source():
             print("Invalid choice. Please enter 1, 2, or 3.")
 
 
-def detect_faces_and_bodies(frame):
+def preprocess_face(face_img):
     """
-    Process a single frame for face and body detection
-    Returns the processed frame with annotations
+    Smart preprocessing
     """
-    # Get frame dimensions
+    # CLAHE on LAB
+    lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    enhanced = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    
+    return enhanced
+
+
+def predict_age_gender_robust(face_img):
+    """
+    Make predictions with multiple variations
+    """
+    try:
+        # Original
+        original = face_img
+        # Enhanced
+        enhanced = preprocess_face(face_img)
+        # Gamma adjusted
+        gamma = 1.2
+        inv_gamma = 1.0 / gamma
+        table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
+        gamma_adj = cv2.LUT(face_img, table)
+        
+        faces = [original, enhanced, gamma_adj]
+        
+        gender_votes = []
+        age_votes = []
+        
+        for face in faces:
+            # Gender
+            blob_gender = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+            genderNet.setInput(blob_gender)
+            genderPreds = genderNet.forward()
+            gender = genderList[genderPreds[0].argmax()]
+            gender_conf = float(genderPreds[0].max())
+            gender_votes.append((gender, gender_conf))
+            
+            # Age
+            blob_age = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
+            ageNet.setInput(blob_age)
+            agePreds = ageNet.forward()
+            age = ageList[agePreds[0].argmax()]
+            age_conf = float(agePreds[0].max())
+            age_votes.append((age, age_conf))
+        
+        # Weighted voting
+        gender_counts = {}
+        for gender, conf in gender_votes:
+            gender_counts[gender] = gender_counts.get(gender, 0) + conf
+        final_gender = max(gender_counts, key=gender_counts.get)
+        final_gender_conf = max([conf for g, conf in gender_votes if g == final_gender])
+        
+        age_counts = {}
+        for age, conf in age_votes:
+            age_counts[age] = age_counts.get(age, 0) + conf
+        final_age = max(age_counts, key=age_counts.get)
+        final_age_conf = max([conf for a, conf in age_votes if a == final_age])
+        
+        return final_age, final_age_conf, final_gender, final_gender_conf
+        
+    except Exception as e:
+        return "Unknown", 0.0, "Unknown", 0.0
+
+
+def detect_faces_and_bodies(frame, use_smoothing=True):
+    """
+    Process frame for face and body detection
+    """
     (h, w) = frame.shape[:2]
 
-    # Prepare the frame for the DNN model (resize for processing but keep original for display)
-    resized_frame = cv2.resize(frame, (300, 300))
-    blob = cv2.dnn.blobFromImage(resized_frame, 1.0, (300, 300), (104.0, 177.0, 123.0))
-
-    # Pass the blob through the network for face detection
+    # Face detection
+    blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False)
     net.setInput(blob)
     detections = net.forward()
 
-    # Detect bodies using HOG on original frame
-    bodies, weights = hog.detectMultiScale(frame, winStride=(8, 8),
-                                           padding=(4, 4), scale=1.05)
+    # Body detection
+    bodies, weights = hog.detectMultiScale(frame, winStride=(8, 8), padding=(4, 4), scale=1.05)
 
-    # Draw body detections
     for (x, y, w_body, h_body) in bodies:
-        cv2.rectangle(frame, (x, y), (x + w_body, y + h_body),
-                      (255, 0, 0), 3)
-        cv2.putText(frame, "Body", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 3)
+        cv2.rectangle(frame, (x, y), (x + w_body, y + h_body), (255, 0, 0), 2)
+        cv2.putText(frame, "Body", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-    # Loop through all face detections
+    if use_smoothing:
+        cleanup_trackers()
+
+    # Process faces
     for i in range(detections.shape[2]):
-        # Extract confidence for each detection
         confidence = detections[0, 0, i, 2]
 
-        # Filter out weak detections
         if confidence > confidence_threshold:
-            # Get bounding box coordinates from the 300x300 detection
-            box = detections[0, 0, i, 3:7]
-            (startX_300, startY_300, endX_300, endY_300) = box
-            
-            # Scale coordinates back to original image dimensions
-            startX = int(startX_300 * w)
-            startY = int(startY_300 * h)
-            endX = int(endX_300 * w)
-            endY = int(endY_300 * h)
+            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+            (startX, startY, endX, endY) = box.astype("int")
 
-            # Ensure coordinates are within frame bounds
             startX = max(0, startX)
             startY = max(0, startY)
             endX = min(w, endX)
             endY = min(h, endY)
 
-            # Extract face region for analysis
-            face_img = frame[startY:endY, startX:endX]
+            face_width = endX - startX
+            face_height = endY - startY
 
-            if face_img.size > 0:
-                # Predict gender
-                blob_gender = cv2.dnn.blobFromImage(
-                    face_img, 1.0, (227, 227),
-                    MODEL_MEAN_VALUES, swapRB=False
-                )
-                genderNet.setInput(blob_gender)
-                genderPreds = genderNet.forward()
-                gender = genderList[genderPreds[0].argmax()]
-                gender_confidence = genderPreds[0].max()
+            if face_width < 40 or face_height < 40:
+                continue
 
-                # Predict age
-                blob_age = cv2.dnn.blobFromImage(
-                    face_img, 1.0, (227, 227),
-                    MODEL_MEAN_VALUES, swapRB=False
-                )
-                ageNet.setInput(blob_age)
-                agePreds = ageNet.forward()
-                age = ageList[agePreds[0].argmax()]
-                age_confidence = agePreds[0].max()
+            face_id = None
+            if use_smoothing:
+                face_id = match_face_to_tracker(startX, startY, face_width, face_height)
 
-                # Estimate ethnicity
-                ethnicity, eth_confidence = estimate_ethnicity(face_img)
-            else:
-                gender = "Unknown"
-                gender_confidence = 0.0
-                age = "Unknown"
-                age_confidence = 0.0
-                ethnicity = "Unknown"
-                eth_confidence = 0.0
+            # Good padding amount
+            pad_x = int(face_width * 0.30)
+            pad_y = int(face_height * 0.35)
+            
+            pad_startX = max(0, startX - pad_x)
+            pad_startY = max(0, startY - pad_y)
+            pad_endX = min(w, endX + pad_x)
+            pad_endY = min(h, endY + pad_y)
 
-            # Draw bounding box around the face
-            cv2.rectangle(frame, (startX, startY), (endX, endY),
-                          (0, 255, 0), 3)
+            face_img_padded = frame[pad_startY:pad_endY, pad_startX:pad_endX].copy()
+            face_img_tight = frame[startY:endY, startX:endX].copy()
 
-            # Prepare text labels
-            face_text = f"Face: {confidence * 100:.1f}%"
-            gender_text = f"{gender}: {gender_confidence * 100:.1f}%"
-            age_text = f"Age {age}: {age_confidence * 100:.1f}%"
-            ethnicity_text = f"{ethnicity}: {eth_confidence * 100:.1f}%"
+            gender = "Unknown"
+            gender_conf = 0.0
+            age = "Unknown"
+            age_conf = 0.0
+            ethnicity = "Unknown"
+            eth_conf = 0.0
 
-            # Calculate positions for text
-            y_offset = startY - 10 if startY - 10 > 10 else startY + 10
+            if face_img_padded.size > 0 and face_img_padded.shape[0] > 60 and face_img_padded.shape[1] > 60:
+                try:
+                    # Robust prediction
+                    age, age_conf, gender, gender_conf = predict_age_gender_robust(face_img_padded)
+                    
+                    # Ethnicity
+                    ethnicity, eth_conf = estimate_ethnicity(face_img_tight)
 
-            # Draw text with background for better visibility
-            texts = [face_text, gender_text, age_text, ethnicity_text]
-            colors = [(0, 255, 0), (255, 200, 0), (255, 100, 255), (0, 200, 255)]
+                    if use_smoothing and face_id is not None:
+                        face_tracker[face_id].update(
+                            (startX, startY, face_width, face_height), 
+                            age, gender, ethnicity
+                        )
+                        age, gender, ethnicity = face_tracker[face_id].get_smoothed_predictions()
+
+                except Exception as e:
+                    pass
+
+            # Draw bounding box
+            cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
+
+            # Labels (no face confidence)
+            gender_text = f"{gender}: {gender_conf * 100:.1f}%"
+            age_text = f"Age {age}: {age_conf * 100:.1f}%"
+            ethnicity_text = f"{ethnicity}: {eth_conf * 100:.1f}%"
+
+            # Draw text
+            y_offset = startY - 10 if startY > 90 else endY + 20
+            texts = [gender_text, age_text, ethnicity_text]
+            colors = [(255, 200, 0), (255, 100, 255), (0, 200, 255)]
 
             for idx, (text, color) in enumerate(zip(texts, colors)):
-                y_pos = y_offset - (len(texts) - idx - 1) * 30
+                if y_offset < 90:
+                    y_pos = y_offset + idx * 25
+                else:
+                    y_pos = y_offset - (len(texts) - idx - 1) * 25
 
-                # Get text size with larger font
-                (text_width, text_height), _ = cv2.getTextSize(
-                    text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 3
-                )
-
-                # Draw background rectangle
-                cv2.rectangle(frame,
-                              (startX, y_pos - text_height - 5),
-                              (startX + text_width, y_pos + 5),
-                              color, -1)
-
-                # Put text with larger font
-                cv2.putText(frame, text, (startX, y_pos),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3)
+                (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                
+                cv2.rectangle(frame, (startX, y_pos - text_h - 4), (startX + text_w, y_pos + 4), color, -1)
+                cv2.putText(frame, text, (startX, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
     return frame
 
@@ -268,6 +395,9 @@ input_type, input_source = get_input_source()
 if input_type == "camera":
     print("Face Detection Started. Press 'q' to quit.")
     cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
 elif input_type == "image":
     print(f"Processing image: {input_source}")
     cap = None
@@ -278,7 +408,6 @@ elif input_type == "video":
 # Process based on input type
 if input_type == "image":
     print(f"Attempting to load image: {input_source}")
-    # Process single image
     frame = cv2.imread(input_source)
     if frame is None:
         print(f"Error: Could not load image from {input_source}")
@@ -287,15 +416,12 @@ if input_type == "image":
     
     print(f"Successfully loaded image. Dimensions: {frame.shape[1]}x{frame.shape[0]} (width x height)")
     
-    # Process the image on the original frame
-    processed_frame = detect_faces_and_bodies(frame.copy())
+    processed_frame = detect_faces_and_bodies(frame.copy(), use_smoothing=False)
     
-    # Check if image is too large for display and resize if necessary
     max_display_width = 1920
     max_display_height = 1080
     
     if processed_frame.shape[1] > max_display_width or processed_frame.shape[0] > max_display_height:
-        # Calculate scaling factor to fit within display limits
         scale_w = max_display_width / processed_frame.shape[1]
         scale_h = max_display_height / processed_frame.shape[0]
         scale = min(scale_w, scale_h)
@@ -308,7 +434,6 @@ if input_type == "image":
     else:
         display_frame = processed_frame
     
-    # Display the result
     cv2.imshow('Face & Body Detection - Image', display_frame)
     print("Image displayed! Press any key to close the image window...")
     cv2.waitKey(0)
@@ -316,13 +441,13 @@ if input_type == "image":
     print("Image processing completed.")
     
 else:
-    # Process video (camera or video file)
-    if cap is None:
+    if cap is None or not cap.isOpened():
         print("Error: Could not initialize video capture")
         exit(1)
     
+    frame_count = 0
+    
     while True:
-        # Capture frame-by-frame
         ret, frame = cap.read()
         if not ret:
             if input_type == "video":
@@ -331,10 +456,10 @@ else:
                 print("Failed to grab frame")
             break
 
-        # Process the frame
-        processed_frame = detect_faces_and_bodies(frame)
+        frame_count += 1
+        
+        processed_frame = detect_faces_and_bodies(frame, use_smoothing=True)
 
-        # Display the resulting frame
         window_title = 'Face & Body Detection'
         if input_type == "camera":
             window_title += ' - Live Camera (Press Q to Quit)'
@@ -343,11 +468,12 @@ else:
         
         cv2.imshow(window_title, processed_frame)
 
-        # Break loop on 'q' key press
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # Release resources
     if cap is not None:
         cap.release()
     cv2.destroyAllWindows()
+    
+    if input_type == "video":
+        print(f"Processed {frame_count} frames")
