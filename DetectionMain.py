@@ -1,479 +1,529 @@
 import cv2
 import numpy as np
+from ultralytics import YOLO
+from deepface import DeepFace
+from collections import defaultdict, deque
 import os
-from collections import deque
+import logging
+from typing import Dict, Tuple, Optional, List
+from dataclasses import dataclass, field
+import sys
+import math
+import time
+import csv
+from datetime import datetime
 
-# Pre-trained DNN face detector model from OpenCV
-modelFile = "opencv_setup/res10_300x300_ssd_iter_140000.caffemodel"
-configFile = "opencv_setup/deploy.prototxt"
-net = cv2.dnn.readNetFromCaffe(configFile, modelFile)
-
-# Gender classification model
-genderProto = "opencv_setup/gender_deploy.prototxt"
-genderModel = "opencv_setup/gender_net.caffemodel"
-genderNet = cv2.dnn.readNetFromCaffe(genderProto, genderModel)
-genderList = ['Male', 'Female']
-
-# Age classification model
-ageProto = "opencv_setup/age_deploy.prototxt"
-ageModel = "opencv_setup/age_net.caffemodel"
-ageNet = cv2.dnn.readNetFromCaffe(ageProto, ageModel)
-ageList = ['(0-2)', '(4-6)', '(8-12)', '(15-20)', '(25-32)', '(38-43)', '(48-53)', '(60-100)']
-
-# Body detector
-hog = cv2.HOGDescriptor()
-hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-
-# Model mean values for preprocessing
-MODEL_MEAN_VALUES = (78.4263377603, 87.7689143744, 114.895847746)
-
-# Set confidence threshold
-confidence_threshold = 0.5
-
-# Temporal smoothing
-face_tracker = {}
-next_face_id = 0
-SMOOTHING_FRAMES = 7
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 
-class FaceTracker:
-    def __init__(self, face_id):
-        self.id = face_id
-        self.age_history = deque(maxlen=SMOOTHING_FRAMES)
-        self.gender_history = deque(maxlen=SMOOTHING_FRAMES)
-        self.ethnicity_history = deque(maxlen=SMOOTHING_FRAMES)
-        self.last_position = None
-        self.frames_missing = 0
-        
-    def update(self, position, age, gender, ethnicity):
-        self.last_position = position
-        self.age_history.append(age)
-        self.gender_history.append(gender)
-        self.ethnicity_history.append(ethnicity)
-        self.frames_missing = 0
-        
-    def get_smoothed_predictions(self):
-        if len(self.age_history) > 0:
-            age = max(set(self.age_history), key=self.age_history.count)
-            gender = max(set(self.gender_history), key=self.gender_history.count)
-            ethnicity = max(set(self.ethnicity_history), key=self.ethnicity_history.count)
-            return age, gender, ethnicity
-        return "Unknown", "Unknown", "Unknown"
+INPUT_SOURCE = r"C:\Users\Ende\Downloads\815657\P1E_S1\P1E_S1_C1\P1E_S1_C1"
+OUTPUT_VIDEO = "store_entry_final.mp4"
+CSV_FILENAME = "demographics_log.csv"
 
+CONFIDENCE_THRESHOLD = 0.45
+SKIP_FRAMES = 1
+PAD_WIDE = 0.60
+PAD_TIGHT = 0.10
 
-def match_face_to_tracker(x, y, w, h):
-    global face_tracker, next_face_id
-    
-    center_x = x + w // 2
-    center_y = y + h // 2
-    
-    min_dist = float('inf')
-    matched_id = None
-    
-    for face_id, tracker in list(face_tracker.items()):
-        if tracker.last_position is not None:
-            tx, ty, tw, th = tracker.last_position
-            tcx = tx + tw // 2
-            tcy = ty + th // 2
-            dist = np.sqrt((center_x - tcx)**2 + (center_y - tcy)**2)
-            
-            if dist < w * 0.6 and dist < min_dist:
-                min_dist = dist
-                matched_id = face_id
-    
-    if matched_id is None:
-        matched_id = next_face_id
-        face_tracker[matched_id] = FaceTracker(matched_id)
-        next_face_id += 1
-    
-    return matched_id
+SCORE_TO_LOCK = 3.0
+CONSENSUS_RATIO = 0.60
+FORCED_LOCK_FRAMES = 12
 
+MIN_QUALITY_THRESHOLD = 0.30
+MIN_FACE_CONFIDENCE = 0.60
+MIN_FACE_SIZE = 50
+MAX_FACE_ANGLE = 35.0
 
-def cleanup_trackers():
-    global face_tracker
-    to_remove = []
-    for face_id, tracker in face_tracker.items():
-        tracker.frames_missing += 1
-        if tracker.frames_missing > 30:
-            to_remove.append(face_id)
-    for face_id in to_remove:
-        del face_tracker[face_id]
+CALIBRATE_MALE = 0.80  
+CALIBRATE_FEMALE = 1.20 
 
+ENABLE_PREPROCESSING = True
+CLAHE_CLIP_LIMIT = 2.0
+GAUSSIAN_KERNEL = 3
 
-def estimate_ethnicity(face_img):
-    """
-    Improved ethnicity estimation
-    """
+TEMPORAL_SMOOTHING_WINDOW = 15
+MAX_AGE_LIST_SIZE = 30
+
+ADAPTIVE_SKIP_ENABLED = True
+MIN_SKIP_FRAMES = 0
+MAX_SKIP_FRAMES = 3
+
+COLOR_MALE = (255, 0, 0)
+COLOR_FEMALE = (203, 192, 255)
+COLOR_ANALYZING = (0, 255, 255)
+COLOR_UNTRACKED = (100, 100, 100)
+COLOR_QUALITY_INDICATOR = (0, 255, 0)
+
+# Dataclasses
+@dataclass
+class DemographicData:
+    gender: str
+    race: str
+    age_bucket: str
+
+@dataclass
+class Accumulator:
+    gender_history: List[str] = field(default_factory=list)
+    race_history: List[str] = field(default_factory=list)
+    gender_score: Dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    race_score: Dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    age_list: List[int] = field(default_factory=list)
+    age_quality_list: List[float] = field(default_factory=list)
+    last_quality: float = 0.0
+    frame_count: int = 0
+    ema_gender_prob: Dict[str, float] = field(default_factory=lambda: {'Male': 0.0, 'Female': 0.0})
+    ema_quality: float = 0.0
+    recent_genders: deque = field(default_factory=lambda: deque(maxlen=TEMPORAL_SMOOTHING_WINDOW))
+
+def ensure_video_source(source: str, output_name: str) -> Optional[str]:
+    if os.path.isfile(source): return source
+    if not os.path.exists(source): return None
+    images = sorted([img for img in os.listdir(source) if img.lower().endswith(('.jpg', '.jpeg', '.png'))])
+    if not images: return None
+    if os.path.exists(output_name): return output_name
+    print(f"Converting {len(images)} images to video...")
+    first = cv2.imread(os.path.join(source, images[0]))
+    h, w = first.shape[:2]
+    out = cv2.VideoWriter(output_name, cv2.VideoWriter_fourcc(*'mp4v'), 25, (w, h))
+    frames_to_process = min(len(images), 2500)
+    for i, img_name in enumerate(images[:frames_to_process]):
+        img = cv2.imread(os.path.join(source, img_name))
+        if img is not None: out.write(img)
+    out.release()
+    return output_name
+
+def load_models() -> Tuple[YOLO, cv2.dnn_Net]:
+    print("Loading models...")
     try:
-        if face_img.size == 0 or face_img.shape[0] < 30 or face_img.shape[1] < 30:
-            return "Unknown", 0.0
-
-        face_h, face_w = face_img.shape[:2]
-        
-        # Extract forehead region
-        forehead_top = int(face_h * 0.18)
-        forehead_bottom = int(face_h * 0.48)
-        forehead_left = int(face_w * 0.22)
-        forehead_right = int(face_w * 0.78)
-        
-        forehead = face_img[forehead_top:forehead_bottom, forehead_left:forehead_right]
-        
-        if forehead.size == 0:
-            return "Unknown", 0.0
-        
-        # Color space analysis
-        lab = cv2.cvtColor(forehead, cv2.COLOR_BGR2LAB)
-        ycrcb = cv2.cvtColor(forehead, cv2.COLOR_BGR2YCrCb)
-        
-        L = np.mean(lab[:, :, 0])
-        a = np.mean(lab[:, :, 1])
-        b = np.mean(lab[:, :, 2])
-        
-        Cr = np.mean(ycrcb[:, :, 1])
-        Cb = np.mean(ycrcb[:, :, 2])
-        
-        # Classification with better thresholds
-        if L < 88:
-            ethnicity = "African"
-            confidence = 0.73
-        elif L < 92 and Cr > 145:
-            ethnicity = "African"
-            confidence = 0.68
-        elif L < 135:
-            if Cr > 144:
-                ethnicity = "South Asian"
-                confidence = 0.70
-            elif b > 133 or Cr > 138:
-                ethnicity = "Hispanic/Latino"
-                confidence = 0.66
-            else:
-                ethnicity = "Middle Eastern"
-                confidence = 0.62
-        elif L < 168:
-            if b > 134:
-                ethnicity = "East Asian"
-                confidence = 0.67
-            elif Cr > 137:
-                ethnicity = "Hispanic/Latino"
-                confidence = 0.64
-            else:
-                ethnicity = "Middle Eastern"
-                confidence = 0.60
-        else:
-            if Cb < 118:
-                ethnicity = "Caucasian"
-                confidence = 0.73
-            else:
-                ethnicity = "East Asian"
-                confidence = 0.63
-        
-        return ethnicity, confidence
-        
+        yolo_model = YOLO('yolov8s.pt')
+        print("  ✓ YOLO model loaded (Small version)")
     except Exception as e:
-        return "Unknown", 0.0
-
-
-def get_input_source():
-    print("\nChoose input source:")
-    print("1. Live Camera")
-    print("2. Image File")
-    print("3. Video File")
-    
-    while True:
-        choice = input("Enter your choice (1-3): ").strip()
-        
-        if choice == "1":
-            return "camera", 0
-        elif choice == "2":
-            while True:
-                file_path = input("Enter the full path to your image file: ").strip()
-                if os.path.exists(file_path):
-                    print(f"Found image: {file_path}")
-                    return "image", file_path
-                else:
-                    print("File not found. Please check the path and try again.")
-                    retry = input("Try again? (y/n): ").strip().lower()
-                    if retry != 'y':
-                        break
-        elif choice == "3":
-            while True:
-                file_path = input("Enter the full path to your video file: ").strip()
-                if os.path.exists(file_path):
-                    print(f"Found video: {file_path}")
-                    return "video", file_path
-                else:
-                    print("File not found. Please check the path and try again.")
-                    retry = input("Try again? (y/n): ").strip().lower()
-                    if retry != 'y':
-                        break
+        print(f"Error loading YOLO: {e}")
+        sys.exit(1)
+    try:
+        faceNet = cv2.dnn.readNet("opencv_setup/res10_300x300_ssd_iter_140000.caffemodel", "opencv_setup/deploy.prototxt")
+        if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+            faceNet.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+            faceNet.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+            print("  ✓ Face detection using CUDA")
         else:
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            print("  ✓ Face detection using CPU")
+    except Exception as e:
+        print(f"Error loading face model: {e}")
+        sys.exit(1)
+    return yolo_model, faceNet
+
+yolo_model, faceNet = load_models()
+
+# Face detection: box
+def get_face_box(img_crop: np.ndarray) -> Tuple[float, Optional[np.ndarray]]:
+    if img_crop is None or img_crop.size == 0: return 0.0, None
+    h, w = img_crop.shape[:2]
+    blob = cv2.dnn.blobFromImage(img_crop, 1.0, (300, 300), [104, 117, 123], False, False)
+    faceNet.setInput(blob)
+    detections = faceNet.forward()
+    best_conf = 0.0
+    best_box = None
+    try:
+        dets = detections[0, 0, :, :]
+        for i in range(dets.shape[0]):
+            conf = float(dets[i, 2])
+            if conf > best_conf:
+                box = dets[i, 3:7] * np.array([w, h, w, h])
+                box = box.astype(int)
+                best_conf = conf
+                best_box = box
+    except Exception:
+        try:
+            flat = detections.flatten()
+            return 0.0, None
+        except Exception:
+            return 0.0, None
+
+    if best_conf > MIN_FACE_CONFIDENCE and best_box is not None:
+        return best_conf, best_box
+    return 0.0, None
 
 
-def preprocess_face(face_img):
-    """
-    Smart preprocessing
-    """
-    # CLAHE on LAB
-    lab = cv2.cvtColor(face_img, cv2.COLOR_BGR2LAB)
+def preprocess_face(img: np.ndarray) -> np.ndarray:
+    if img is None or img.size == 0 or not ENABLE_PREPROCESSING: return img
+    h, w = img.shape[:2]
+    if h < 112:
+        scale = 112 / h
+        img = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    processed = img.copy()
+    lab = cv2.cvtColor(processed, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=(8, 8))
     l = clahe.apply(l)
-    enhanced = cv2.merge([l, a, b])
-    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
-    
-    return enhanced
+    processed = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+    if GAUSSIAN_KERNEL > 0:
+        processed = cv2.GaussianBlur(processed, (GAUSSIAN_KERNEL, GAUSSIAN_KERNEL), 0)
+    return processed
 
+# quality scoring
+def calculate_quality_score(face_img: np.ndarray) -> float:
+    if face_img is None or face_img.size == 0: return 0.0
 
-def predict_age_gender_robust(face_img):
+    gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+    w = gray.shape[1]
+    mid = w // 2
+    left_var = np.var(gray[:, :mid]) if mid > 0 else 0.0
+    right_var = np.var(gray[:, mid:]) if mid > 0 else 0.0
+    diff = abs(left_var - right_var) / max(left_var + right_var, 1.0)
+    angle = min(diff * 80.0, 90.0)
+
+    if angle > MAX_FACE_ANGLE: return 0.0
+
+    h, w = face_img.shape[:2]
+    blur_val = cv2.Laplacian(gray, cv2.CV_64F).var()
+    avg_brightness = np.mean(gray)
+
+    size_score = min(h / 140.0, 1.0)
+    blur_score = min(blur_val / 180.0, 1.0)
+    bright_score = 0.2 if (avg_brightness < 40 or avg_brightness > 220) else 1.0
+    angle_score = 1.0 - (angle / MAX_FACE_ANGLE)
+
+    return (size_score * 0.3 + blur_score * 0.4 + bright_score * 0.1 + angle_score * 0.2)
+
+# demographic analysis
+
+def parse_deepface_gender_result(gender_res) -> Tuple[float, float]:
     """
-    Make predictions with multiple variations
+    Return (male_prob, female_prob) in [0,1].
+    Accepts DeepFace.analyze outputs in different return formats.
     """
+    male_p = female_p = 0.0
     try:
-        # Original
-        original = face_img
-        # Enhanced
-        enhanced = preprocess_face(face_img)
-        # Gamma adjusted
-        gamma = 1.2
-        inv_gamma = 1.0 / gamma
-        table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
-        gamma_adj = cv2.LUT(face_img, table)
-        
-        faces = [original, enhanced, gamma_adj]
-        
-        gender_votes = []
-        age_votes = []
-        
-        for face in faces:
-            # Gender
-            blob_gender = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-            genderNet.setInput(blob_gender)
-            genderPreds = genderNet.forward()
-            gender = genderList[genderPreds[0].argmax()]
-            gender_conf = float(genderPreds[0].max())
-            gender_votes.append((gender, gender_conf))
-            
-            # Age
-            blob_age = cv2.dnn.blobFromImage(face, 1.0, (227, 227), MODEL_MEAN_VALUES, swapRB=False)
-            ageNet.setInput(blob_age)
-            agePreds = ageNet.forward()
-            age = ageList[agePreds[0].argmax()]
-            age_conf = float(agePreds[0].max())
-            age_votes.append((age, age_conf))
-        
-        # Weighted voting
-        gender_counts = {}
-        for gender, conf in gender_votes:
-            gender_counts[gender] = gender_counts.get(gender, 0) + conf
-        final_gender = max(gender_counts, key=gender_counts.get)
-        final_gender_conf = max([conf for g, conf in gender_votes if g == final_gender])
-        
-        age_counts = {}
-        for age, conf in age_votes:
-            age_counts[age] = age_counts.get(age, 0) + conf
-        final_age = max(age_counts, key=age_counts.get)
-        final_age_conf = max([conf for a, conf in age_votes if a == final_age])
-        
-        return final_age, final_age_conf, final_gender, final_gender_conf
-        
+        # DeepFace sometimes returns a list of dicts, sometimes a dict
+        entry = gender_res[0] if isinstance(gender_res, list) and len(gender_res) > 0 else gender_res
+        g = entry.get('gender', None)
+        if isinstance(g, dict):
+            # Keys might be 'Man'/'Woman' or 'man'/'woman'
+            keys = {k.lower(): k for k in g.keys()}
+            if 'man' in keys and 'woman' in keys:
+                male_p = g[keys['man']] / 100.0
+                female_p = g[keys['woman']] / 100.0
+            else:
+                # sometimes DeepFace returns string label and 'gender_val' or similar
+                pass
+        else:
+            # some versions return 'gender' string and 'gender_confidence' maybe
+            label = str(entry.get('gender', '')).lower()
+            if label in ['man', 'male']:
+                male_p = float(entry.get('gender_confidence', 0.0)) / 100.0 if entry.get('gender_confidence') else 0.9
+                female_p = 1.0 - male_p
+            elif label in ['woman', 'female']:
+                female_p = float(entry.get('gender_confidence', 0.0)) / 100.0 if entry.get('gender_confidence') else 0.9
+                male_p = 1.0 - female_p
+    except Exception:
+        pass
+    s = max(male_p + female_p, 1e-6)
+    male_p /= s
+    female_p /= s
+    return male_p, female_p
+
+def analyze_demographics_unified(img_crop_wide: np.ndarray, img_crop_tight: np.ndarray) -> Optional[Dict]:
+    """
+    Uses WIDE crop for Gender (context) and TIGHT crop for Age/Race (features).
+    Returns probabilities instead of forcing a label decision here.
+    """
+    if img_crop_wide is None or img_crop_wide.size == 0: return None
+
+    try:
+        # GENDER: wide crop raw image (no preprocessing)
+        gender_res = DeepFace.analyze(
+            img_crop_wide,
+            actions=['gender'],
+            detector_backend='opencv',
+            enforce_detection=False,
+            align=True,
+            silent=True
+        )
+        male_p, female_p = parse_deepface_gender_result(gender_res)
+
+        # calibration multipliers (keeps values in 0-1 after renormalizing)
+        male_p *= CALIBRATE_MALE
+        female_p *= CALIBRATE_FEMALE
+        denom = max(male_p + female_p, 1e-6)
+        male_p /= denom
+        female_p /= denom
+
+        # RACE & AGE on TIGHT
+        processed_tight = preprocess_face(img_crop_tight)
+        other_res = DeepFace.analyze(
+            processed_tight,
+            actions=['age', 'race'],
+            detector_backend='opencv',
+            enforce_detection=False,
+            align=True,
+            silent=True
+        )
+        entry = other_res[0] if isinstance(other_res, list) and len(other_res) > 0 else other_res
+        race = entry.get('dominant_race', entry.get('race', 'Unknown'))
+        age = int(entry.get('age', 0) or 0)
+
+        return {
+            'male_prob': male_p,
+            'female_prob': female_p,
+            'race': race,
+            'age_raw': age,
+            'frame_confidence': max(male_p, female_p)
+        }
+
     except Exception as e:
-        return "Unknown", 0.0, "Unknown", 0.0
+        return None
 
 
-def detect_faces_and_bodies(frame, use_smoothing=True):
-    """
-    Process frame for face and body detection
-    """
-    (h, w) = frame.shape[:2]
+def apply_temporal_smoothing(age_list: List[int], quality_list: List[float]) -> int:
+    if not age_list: return 0
+    combined = sorted(zip(quality_list, age_list), key=lambda x: x[0], reverse=True)
+    top_n = max(1, len(combined) // 2)
+    best_entries = combined[:top_n]
+    weighted_ages = []
+    for q, age in best_entries:
+        count = max(1, int(q * 10))
+        weighted_ages.extend([age] * count)
+    return int(np.median(weighted_ages))
 
-    # Face detection
-    blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300), (104.0, 177.0, 123.0), swapRB=False)
-    net.setInput(blob)
-    detections = net.forward()
+def get_age_bucket(age: int) -> str:
+    if age <= 0: return "Unknown"
+    base = 5 * (age // 5)
+    return f"{base}-{base+5}"
 
-    # Body detection
-    bodies, weights = hog.detectMultiScale(frame, winStride=(8, 8), padding=(4, 4), scale=1.05)
+def extract_face_crops(upper_body: np.ndarray, face_box: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    fx1, fy1, fx2, fy2 = face_box
+    fx1, fy1, fx2, fy2 = int(fx1), int(fy1), int(fx2), int(fy2)
+    fh, fw = fy2 - fy1, fx2 - fx1
+    h, w = upper_body.shape[:2]
 
-    for (x, y, w_body, h_body) in bodies:
-        cv2.rectangle(frame, (x, y), (x + w_body, y + h_body), (255, 0, 0), 2)
-        cv2.putText(frame, "Body", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+    pw = int(fw * PAD_WIDE)
+    pwy = int(fh * PAD_WIDE)
+    wx1, wy1 = max(0, fx1 - pw), max(0, fy1 - pwy)
+    wx2, wy2 = min(w, fx2 + pw), min(h, fy2 + pwy)
+    img_wide = upper_body[wy1:wy2, wx1:wx2]
 
-    if use_smoothing:
-        cleanup_trackers()
+    pt = int(fw * PAD_TIGHT)
+    pty = int(fh * PAD_TIGHT)
+    tx1, ty1 = max(0, fx1 - pt), max(0, fy1 - pty)
+    tx2, ty2 = min(w, fx2 + pt), min(h, fy2 + pty)
+    img_tight = upper_body[ty1:ty2, tx1:tx2]
 
-    # Process faces
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
+    return img_wide, img_tight
 
-        if confidence > confidence_threshold:
-            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            (startX, startY, endX, endY) = box.astype("int")
 
-            startX = max(0, startX)
-            startY = max(0, startY)
-            endX = min(w, endX)
-            endY = min(h, endY)
+def draw_results(frame, locked_list, locked_data, analyzing, accumulators):
+    for tid, box in locked_list:
+        if tid in locked_data:
+            data = locked_data[tid]
+            x1, y1, x2, y2 = box
+            color = COLOR_MALE if data.gender == "Male" else COLOR_FEMALE
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, f"ID:{tid} {data.gender} {data.age_bucket}", (x1, y1-25), 0, 0.6, color, 2)
+            cv2.putText(frame, f"{data.race} (LOCKED)", (x1, y1-5), 0, 0.6, color, 2)
 
-            face_width = endX - startX
-            face_height = endY - startY
+    for tid, box, acc, qual in analyzing:
+        x1, y1, x2, y2 = box
+        if acc:
+            if acc.gender_score:
+                top_g = max(acc.gender_score, key=acc.gender_score.get)
+                score = acc.gender_score[top_g]
+                label = f"{top_g} ({int(score*10)}%)"
+            else:
+                top_g = "?"
+                score = 0
+                label = "Scan..."
 
-            if face_width < 40 or face_height < 40:
+            prog = min(score / SCORE_TO_LOCK, 1.0)
+            cv2.rectangle(frame, (x1, y1-30), (x1+int((x2-x1)*prog), y1-25), COLOR_ANALYZING, -1)
+            cv2.putText(frame, label, (x1, y1-5), 0, 0.5, COLOR_ANALYZING, 2)
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_ANALYZING if acc else COLOR_UNTRACKED, 2)
+
+
+def main():
+    video_path = ensure_video_source(INPUT_SOURCE, OUTPUT_VIDEO)
+    if not video_path:
+        print("No valid video source.")
+        return
+
+    cap = cv2.VideoCapture(video_path)
+    print(f"Processing {video_path}...")
+
+    accumulators: Dict[int, Accumulator] = {}
+    locked_data: Dict[int, DemographicData] = {}
+    last_check: Dict[int, int] = {}
+    frame_count = 0
+
+    # --- CSV INITIALIZATION ---
+    print(f"Logging demographics to: {CSV_FILENAME}")
+    with open(CSV_FILENAME, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(["Timestamp", "Track_ID", "Gender", "Race", "Age_Bucket", "Raw_Age", "Gender_Score", "Race_Score"])
+    
+    logged_ids = set() # Keep track of who we already saved to avoid duplicates
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret: break
+        frame_count += 1
+
+        results = yolo_model.track(frame, persist=True, classes=0, conf=CONFIDENCE_THRESHOLD, verbose=False, tracker="bytetrack.yaml")
+
+        if len(results) == 0 or results[0].boxes.id is None:
+            cv2.imshow('Final Analysis', frame)
+            if cv2.waitKey(1) == ord('q'): break
+            continue
+
+        boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+        ids = results[0].boxes.id.cpu().numpy().astype(int)
+
+        draw_locked = []
+        draw_analyzing = []
+        faces_to_process = []
+
+        for box, track_id in zip(boxes, ids):
+            if track_id in locked_data:
+                draw_locked.append((track_id, box))
                 continue
 
-            face_id = None
-            if use_smoothing:
-                face_id = match_face_to_tracker(startX, startY, face_width, face_height)
+            if track_id not in accumulators:
+                accumulators[track_id] = Accumulator()
 
-            # Good padding amount
-            pad_x = int(face_width * 0.30)
-            pad_y = int(face_height * 0.35)
-            
-            pad_startX = max(0, startX - pad_x)
-            pad_startY = max(0, startY - pad_y)
-            pad_endX = min(w, endX + pad_x)
-            pad_endY = min(h, endY + pad_y)
+            acc = accumulators[track_id]
+            quality = acc.last_quality if acc else 0.0
 
-            face_img_padded = frame[pad_startY:pad_endY, pad_startX:pad_endX].copy()
-            face_img_tight = frame[startY:endY, startX:endX].copy()
+            # EMA-based skip decision
+            skip = SKIP_FRAMES
+            if ADAPTIVE_SKIP_ENABLED:
+                q = acc.ema_quality if acc.ema_quality is not None else quality
+                skip = int(MAX_SKIP_FRAMES * q) if q > 0.5 else MIN_SKIP_FRAMES
 
-            gender = "Unknown"
-            gender_conf = 0.0
-            age = "Unknown"
-            age_conf = 0.0
-            ethnicity = "Unknown"
-            eth_conf = 0.0
+            last_frame = last_check.get(track_id, 0)
+            if (frame_count - last_frame) <= skip:
+                draw_analyzing.append((track_id, box, acc, quality))
+                continue
 
-            if face_img_padded.size > 0 and face_img_padded.shape[0] > 60 and face_img_padded.shape[1] > 60:
-                try:
-                    # Robust prediction
-                    age, age_conf, gender, gender_conf = predict_age_gender_robust(face_img_padded)
-                    
-                    # Ethnicity
-                    ethnicity, eth_conf = estimate_ethnicity(face_img_tight)
+            x1, y1, x2, y2 = box
+            h_body = y2 - y1
+            upper_body = frame[y1:y1+int(h_body*0.45), x1:x2]
+            if upper_body.size == 0:
+                draw_analyzing.append((track_id, box, acc, quality))
+                continue
 
-                    if use_smoothing and face_id is not None:
-                        face_tracker[face_id].update(
-                            (startX, startY, face_width, face_height), 
-                            age, gender, ethnicity
-                        )
-                        age, gender, ethnicity = face_tracker[face_id].get_smoothed_predictions()
+            conf, face_box = get_face_box(upper_body)
+            if conf < MIN_FACE_CONFIDENCE or face_box is None:
+                draw_analyzing.append((track_id, box, acc, quality))
+                continue
 
-                except Exception as e:
-                    pass
+            img_wide, img_tight = extract_face_crops(upper_body, face_box)
+            if img_tight is None or img_tight.size == 0 or img_tight.shape[0] < MIN_FACE_SIZE:
+                draw_analyzing.append((track_id, box, acc, quality))
+                continue
 
-            # Draw bounding box
-            cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
+            quality = calculate_quality_score(img_tight)
+            acc.last_quality = quality
+            alpha_q = 0.25
+            acc.ema_quality = (alpha_q * quality) + ((1 - alpha_q) * acc.ema_quality) if acc.ema_quality else quality
 
-            # Labels (no face confidence)
-            gender_text = f"{gender}: {gender_conf * 100:.1f}%"
-            age_text = f"Age {age}: {age_conf * 100:.1f}%"
-            ethnicity_text = f"{ethnicity}: {eth_conf * 100:.1f}%"
+            if quality <= MIN_QUALITY_THRESHOLD:
+                draw_analyzing.append((track_id, box, acc, quality))
+                continue
 
-            # Draw text
-            y_offset = startY - 10 if startY > 90 else endY + 20
-            texts = [gender_text, age_text, ethnicity_text]
-            colors = [(255, 200, 0), (255, 100, 255), (0, 200, 255)]
+            faces_to_process.append((track_id, box, img_wide, img_tight, quality))
+            draw_analyzing.append((track_id, box, acc, quality))
 
-            for idx, (text, color) in enumerate(zip(texts, colors)):
-                if y_offset < 90:
-                    y_pos = y_offset + idx * 25
-                else:
-                    y_pos = y_offset - (len(texts) - idx - 1) * 25
+        # Batch processing
+        for track_id, box, img_w, img_t, quality in faces_to_process:
+            last_check[track_id] = frame_count
+            res = analyze_demographics_unified(img_w, img_t)
 
-                (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                
-                cv2.rectangle(frame, (startX, y_pos - text_h - 4), (startX + text_w, y_pos + 4), color, -1)
-                cv2.putText(frame, text, (startX, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+            if not res:
+                continue
 
-    return frame
+            acc = accumulators[track_id]
+            acc.frame_count += 1
+
+            male_p = res['male_prob']
+            female_p = res['female_prob']
+            frame_conf = res.get('frame_confidence', max(male_p, female_p))
+            predicted_gender = 'Male' if male_p >= female_p else 'Female'
+
+            # Update EMA of gender probs
+            alpha = 0.35
+            acc.ema_gender_prob['Male'] = alpha * male_p + (1 - alpha) * acc.ema_gender_prob.get('Male', 0.0)
+            acc.ema_gender_prob['Female'] = alpha * female_p + (1 - alpha) * acc.ema_gender_prob.get('Female', 0.0)
+
+            # update gender_score using weighted frame confidence * quality
+            acc.gender_score['Male'] += acc.ema_gender_prob['Male'] * quality * frame_conf
+            acc.gender_score['Female'] += acc.ema_gender_prob['Female'] * quality * frame_conf
+
+            # history for consensus
+            acc.recent_genders.append(predicted_gender)
+            acc.gender_history.append(predicted_gender)
+
+            # race & age updates
+            race = res.get('race', 'Unknown')
+            acc.race_score[race] += quality
+            acc.race_history.append(race)
+            age_raw = res.get('age_raw', 0)
+            acc.age_list.append(age_raw)
+            acc.age_quality_list.append(quality)
+            if len(acc.age_list) > MAX_AGE_LIST_SIZE:
+                acc.age_list = acc.age_list[-MAX_AGE_LIST_SIZE:]
+                acc.age_quality_list = acc.age_quality_list[-MAX_AGE_LIST_SIZE:]
+
+            # lock to prevent stuttering
+            top_g = max(acc.gender_score, key=acc.gender_score.get)
+            score_g = acc.gender_score[top_g]
+            top_r = max(acc.race_score, key=acc.race_score.get) if acc.race_score else "Unknown"
+            score_r = acc.race_score[top_r] if acc.race_score else 0.0
+
+            total_votes = len(acc.gender_history) if acc.gender_history else 1
+            agreement = acc.gender_history.count(top_g) / total_votes
+            recent_agreement = (list(acc.recent_genders).count(top_g) / (len(acc.recent_genders) if len(acc.recent_genders) else 1))
+
+            can_lock_normal = (score_g >= SCORE_TO_LOCK and score_r >= SCORE_TO_LOCK and agreement >= CONSENSUS_RATIO and recent_agreement >= (CONSENSUS_RATIO - 0.1))
+            can_lock_forced = (acc.frame_count >= FORCED_LOCK_FRAMES and score_g > 1.0)
+
+            if can_lock_normal or can_lock_forced:
+                final_age = apply_temporal_smoothing(acc.age_list, acc.age_quality_list)
+                locked_data[track_id] = DemographicData(
+                    gender=top_g,
+                    race=top_r,
+                    age_bucket=get_age_bucket(final_age)
+                )
+                print(f"🔒 LOCKED ID {track_id}: {top_g}, {top_r}, Age {final_age}")
+
+                # CSV logging
+                if track_id not in logged_ids:
+                    try:
+                        bucket = get_age_bucket(final_age)
+                        with open(CSV_FILENAME, 'a', newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerow([
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                track_id,
+                                top_g,
+                                top_r,
+                                bucket,
+                                final_age,
+                                round(score_g, 2),
+                                round(score_r, 2)
+                            ])
+                        logged_ids.add(track_id)
+                        print(f"  -> Saved to {CSV_FILENAME}")
+                    except Exception as e:
+                        print(f"CSV Error: {e}")
 
 
-# Get input source
-input_type, input_source = get_input_source()
+        draw_results(frame, draw_locked, locked_data, draw_analyzing, accumulators)
+        cv2.imshow('Final Analysis', frame)
+        if cv2.waitKey(1) == ord('q'): break
 
-if input_type == "camera":
-    print("Face Detection Started. Press 'q' to quit.")
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_FPS, 30)
-elif input_type == "image":
-    print(f"Processing image: {input_source}")
-    cap = None
-elif input_type == "video":
-    print(f"Processing video: {input_source}")
-    cap = cv2.VideoCapture(input_source)
-
-# Process based on input type
-if input_type == "image":
-    print(f"Attempting to load image: {input_source}")
-    frame = cv2.imread(input_source)
-    if frame is None:
-        print(f"Error: Could not load image from {input_source}")
-        print("Please check that the file exists and is a valid image format.")
-        exit(1)
-    
-    print(f"Successfully loaded image. Dimensions: {frame.shape[1]}x{frame.shape[0]} (width x height)")
-    
-    processed_frame = detect_faces_and_bodies(frame.copy(), use_smoothing=False)
-    
-    max_display_width = 1920
-    max_display_height = 1080
-    
-    if processed_frame.shape[1] > max_display_width or processed_frame.shape[0] > max_display_height:
-        scale_w = max_display_width / processed_frame.shape[1]
-        scale_h = max_display_height / processed_frame.shape[0]
-        scale = min(scale_w, scale_h)
-        
-        new_width = int(processed_frame.shape[1] * scale)
-        new_height = int(processed_frame.shape[0] * scale)
-        
-        print(f"Image is large, resizing for display: {new_width}x{new_height}")
-        display_frame = cv2.resize(processed_frame, (new_width, new_height))
-    else:
-        display_frame = processed_frame
-    
-    cv2.imshow('Face & Body Detection - Image', display_frame)
-    print("Image displayed! Press any key to close the image window...")
-    cv2.waitKey(0)
+    cap.release()
     cv2.destroyAllWindows()
-    print("Image processing completed.")
-    
-else:
-    if cap is None or not cap.isOpened():
-        print("Error: Could not initialize video capture")
-        exit(1)
-    
-    frame_count = 0
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            if input_type == "video":
-                print("End of video reached")
-            else:
-                print("Failed to grab frame")
-            break
 
-        frame_count += 1
-        
-        processed_frame = detect_faces_and_bodies(frame, use_smoothing=True)
-
-        window_title = 'Face & Body Detection'
-        if input_type == "camera":
-            window_title += ' - Live Camera (Press Q to Quit)'
-        else:
-            window_title += ' - Video (Press Q to Quit)'
-        
-        cv2.imshow(window_title, processed_frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    if cap is not None:
-        cap.release()
-    cv2.destroyAllWindows()
-    
-    if input_type == "video":
-        print(f"Processed {frame_count} frames")
+if __name__ == "__main__":
+    main()
