@@ -1,5 +1,6 @@
 # utils.py
 import os, json, time
+import numpy as np
 
 def ensure_person_dir(base, pid):
     """Create a folder for each person."""
@@ -20,6 +21,43 @@ def append_metadata(pdir, entry):
     data.append(entry)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+def save_person_feature(pdir, feature):
+    """Save the face feature vector for a person."""
+    if feature is None:
+        return
+    feature_path = os.path.join(pdir, "feature.npy")
+    np.save(feature_path, feature)
+
+def load_existing_persons(output_dir):
+    """
+    Load existing persons from output directory.
+
+    Returns:
+        dict: {person_id: feature_vector} for all existing persons
+    """
+    persons = {}
+    if not os.path.exists(output_dir):
+        return persons
+
+    for dirname in os.listdir(output_dir):
+        if not dirname.startswith("person_"):
+            continue
+
+        try:
+            # Extract person ID from folder name (e.g., "person_000" -> 0)
+            pid = int(dirname.split("_")[1])
+
+            # Load feature vector if it exists
+            feature_path = os.path.join(output_dir, dirname, "feature.npy")
+            if os.path.exists(feature_path):
+                feature = np.load(feature_path)
+                persons[pid] = feature
+        except (ValueError, IndexError, IOError) as e:
+            print(f"Warning: Could not load person from {dirname}: {e}")
+            continue
+
+    return persons
 
 def now_ts():
     """Return current local time as string."""

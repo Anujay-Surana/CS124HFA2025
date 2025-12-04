@@ -1,6 +1,25 @@
+# Virtual environments
 venv/
 .venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Security
 *.pem
 *.key
 *.pub
@@ -11,5 +30,18 @@ id_rsa
 id_rsa.pub
 known_hosts
 .ssh/
-__pycache__/
+
+# Environment
+.envrc
+.env
+.env.local
+
+# Output
 recog/output/
+
+# Large model files (download separately)
+recog/models/face_recognition_sface_2021dec.onnx
+
+# Temporary files
+*.log
+debug.log

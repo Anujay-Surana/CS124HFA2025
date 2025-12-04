@@ -1,0 +1,401 @@
+================================================================================
+CS124 Face Recognition and Tracking System - Team Setup Guide
+================================================================================
+
+Welcome to the project! We've prepared automated setup tools to help you get
+started quickly.
+
+================================================================================
+📦 TOOLS WE'VE PROVIDED
+================================================================================
+
+1. setup.sh - Automated Installation Script
+   ----------------------------------------
+   Features: One-command setup for everything
+   - Auto-detects Python version (requires Python 3.8+)
+   - Auto-creates virtual environment (.venv directory)
+   - Auto-installs all dependencies (OpenCV, NumPy, etc.)
+   - Auto-verifies installation success
+   - Provides clear progress indicators and error messages
+
+   Usage:
+   macOS/Linux:
+     chmod +x setup.sh
+     ./setup.sh
+
+   Windows PowerShell:
+     python -m venv .venv
+     .venv\Scripts\activate
+     pip install -r recog\requirements.txt
+
+
+2. run.sh - Convenience Run Script
+   --------------------------------
+   Features: Quick system launch
+   - Auto-activates virtual environment
+   - Starts face recognition system
+   - Supports verification mode (check installation)
+
+   Usage:
+   Run the system:
+     ./run.sh
+
+   Verify installation:
+     ./run.sh verify
+
+
+3. QUICKSTART.md - 5-Minute Quick Start Guide
+   -------------------------------------------
+   Contents: Minimal steps to get started
+   - Prerequisites checklist
+   - 3-step installation
+   - Detailed running instructions
+   - Quick fixes for common issues
+   - Project structure overview
+   - Code modification and commit workflow
+
+
+4. TROUBLESHOOTING.md - Detailed Troubleshooting Guide
+   ---------------------------------------------------
+   Contents: Solutions for 10+ common issues
+
+   Covered problem types:
+   ✓ Python not installed or wrong version
+   ✓ Virtual environment creation fails
+   ✓ pip dependency installation fails
+   ✓ YuNet interface unavailable (OpenCV issue)
+   ✓ Camera won't open (permissions/driver issues)
+   ✓ Module import errors
+   ✓ Model files not found
+   ✓ Performance issues (lag, low FPS)
+   ✓ Script permission problems
+   ✓ Windows/Linux specific issues
+
+   Each problem includes:
+   - Error message examples
+   - Detailed solution steps
+   - Multiple solutions (where applicable)
+   - Platform-specific instructions
+
+
+5. README.md - Complete Project Documentation
+   -------------------------------------------
+   Contents: Full project documentation
+   - Feature overview
+   - Quick start guide (points to setup.sh)
+   - System architecture explanation
+   - Configuration parameter tuning
+   - Output structure description
+   - Team collaboration section
+   - Git workflow
+
+
+6. verify_setup.py - Installation Verification Script
+   ---------------------------------------------------
+   Features: Checks if environment is configured correctly
+   - Checks Python version
+   - Checks all dependencies
+   - Checks if OpenCV supports YuNet
+   - Checks if model files exist
+   - Provides detailed check results
+
+
+7. CLAUDE.md - Architecture Documentation (for AI assistant)
+   ---------------------------------------------------------
+   Contents: Detailed technical documentation
+   - Complete code architecture description
+   - Algorithm implementation details
+   - Component functionality descriptions
+   - Model file information
+
+================================================================================
+🚀 QUICK START (3 STEPS)
+================================================================================
+
+First Time Setup:
+-----------------
+
+1. Get the code
+   git clone <your-repository-URL>
+   cd CS124HFA2025
+
+2. Automated installation (wait 2-3 minutes)
+   ./setup.sh
+
+   This script will:
+   ✓ Check Python (requires 3.8+)
+   ✓ Create virtual environment
+   ✓ Install all dependencies (~100MB download)
+   ✓ Verify successful installation
+
+3. Run the system
+   source .venv/bin/activate
+   ./run.sh
+
+   Success = You see webcam feed with face boxes!
+   Press 'q' to quit
+
+
+Daily Usage:
+------------
+
+Each time you want to run:
+  source .venv/bin/activate  # Activate virtual environment
+  ./run.sh                   # Run the system
+
+Or directly:
+  cd recog
+  python main.py
+
+================================================================================
+💡 SYSTEM FEATURES
+================================================================================
+
+What this system does:
+
+1. Face Detection
+   - Uses YuNet detector
+   - Real-time face detection in video
+   - Extracts facial landmarks (eyes, nose, mouth positions)
+
+2. Face Recognition
+   - Uses SFace recognizer
+   - Extracts 128-dimensional feature vector for each face
+   - Recognizes same person through feature similarity
+
+3. Intelligent Tracking
+   - Hybrid tracking algorithm: position (30%) + features (70%)
+   - Same person maintains same ID throughout video
+   - Even if person temporarily leaves frame, re-entering = same ID
+
+4. Automated Output
+   - Automatically creates separate folder for each person
+   - Saves all face crops for that person
+   - Generates metadata JSON (timestamps, bounding boxes)
+
+Core Advantages:
+----------------
+✓ No model training needed (pre-trained models included)
+✓ Real-time processing (webcam input)
+✓ Auto-organized output (classified by person)
+✓ Cross-platform support (macOS/Windows/Linux)
+
+================================================================================
+📁 PROJECT STRUCTURE
+================================================================================
+
+CS124HFA2025/
+│
+├── setup.sh                    # Automated installation script
+├── run.sh                      # Run script
+│
+├── README.md                   # Complete project documentation
+├── QUICKSTART.md               # 5-minute quick start
+├── TROUBLESHOOTING.md          # Troubleshooting guide
+├── SETUP_INSTRUCTIONS.txt      # This file (setup instructions)
+├── CLAUDE.md                   # Architecture documentation
+│
+├── recog/                      # Main program directory
+│   ├── main.py                 # Entry point (main detection loop)
+│   ├── centroid_tracker.py     # Tracking algorithm implementation
+│   ├── utils.py                # Utility functions
+│   ├── verify_setup.py         # Installation verification script
+│   │
+│   ├── models/                 # Pre-trained models (included)
+│   │   ├── face_detection_yunet.onnx         # 227KB
+│   │   └── face_recognition_sface_2021dec.onnx # 37MB
+│   │
+│   ├── output/                 # Output directory (auto-generated)
+│   │   ├── person_000/
+│   │   │   ├── 000000.jpg
+│   │   │   ├── 000005.jpg
+│   │   │   └── metadata.json
+│   │   ├── person_001/
+│   │   └── ...
+│   │
+│   └── requirements.txt        # Python dependency list
+│
+└── .venv/                      # Virtual environment (created by setup.sh)
+
+================================================================================
+🛠️ QUICK PROBLEM SOLVING
+================================================================================
+
+Problem 1: "python3: command not found"
+Solution: Install Python
+          macOS: brew install python3
+          Windows: https://www.python.org/downloads/
+          Linux: sudo apt install python3 python3-pip
+
+Problem 2: "Virtual environment not found"
+Solution: Run ./setup.sh to create virtual environment
+
+Problem 3: "Module not found: cv2"
+Solution: Make sure virtual environment is activated
+          source .venv/bin/activate
+          You should see (.venv) prefix in your prompt
+
+Problem 4: "Camera won't open"
+Solution: - Check camera permissions in System Preferences/Settings
+          - Make sure no other app is using the camera
+          - Try changing camera index in main.py
+
+Problem 5: "YuNet interface not available"
+Solution: pip install opencv-contrib-python>=4.8.0
+
+More issues? See TROUBLESHOOTING.md
+
+================================================================================
+📝 DEVELOPMENT WORKFLOW
+================================================================================
+
+1. Update code
+   git pull
+
+2. Activate environment
+   source .venv/bin/activate
+
+3. Modify code
+   (use your favorite editor)
+
+4. Test run
+   ./run.sh
+
+5. Commit code
+   git add .
+   git commit -m "Description of changes"
+   git push
+
+Recommended branching strategy:
+  - main branch: stable version
+  - feature/* branches: new feature development
+  - bugfix/* branches: bug fixes
+
+================================================================================
+🎯 KEY CONFIGURATION PARAMETERS
+================================================================================
+
+Adjustable parameters in main.py (lines 40-44):
+
+CentroidTracker(
+    max_disappeared=50,          # Frames before removing ID (higher = more persistent)
+    max_distance=150,            # Max pixel distance for position matching
+    min_feature_similarity=0.4   # Min similarity for feature matching (0-1)
+)
+
+Save frequency (around line 140):
+  if frame_count % 5 == 0:       # Save every 5 frames
+                                 # Change to 10 to reduce output files
+
+Video source (line 147):
+  run(source=0)                  # 0=default camera, 1=second camera
+  run("path/to/video.mp4")       # Use video file
+
+================================================================================
+📚 RECOMMENDED READING ORDER
+================================================================================
+
+1. QUICKSTART.md       - Get started quickly
+2. README.md           - Understand full functionality
+3. main.py             - See main program flow
+4. centroid_tracker.py - Understand tracking algorithm
+5. TROUBLESHOOTING.md  - Refer when you have issues
+6. CLAUDE.md           - Deep dive into architecture
+
+================================================================================
+✅ INSTALLATION SUCCESS INDICATORS
+================================================================================
+
+You've successfully installed when you see:
+
+1. After running ./setup.sh:
+   ✓ Setup completed successfully!
+
+2. After running ./run.sh verify:
+   ✓ Python version: 3.x
+   ✓ opencv-python installed
+   ✓ opencv-contrib-python installed
+   ✓ YuNet interface available
+   ✓ Models found
+
+3. After running ./run.sh:
+   - Webcam window appears
+   - Green boxes around faces
+   - Shows person_000, etc. IDs
+
+================================================================================
+🤝 TEAM COLLABORATION TIPS
+================================================================================
+
+- All code comments in English (for team collaboration)
+- git pull before committing to get latest code
+- Clear commit messages describing changes
+- Check TROUBLESHOOTING.md first when you have issues
+- Create new branch for major feature changes
+- Sync code regularly to avoid conflicts
+
+================================================================================
+🆘 GETTING HELP
+================================================================================
+
+1. Check documentation:
+   - TROUBLESHOOTING.md (common issues)
+   - README.md (complete docs)
+   - QUICKSTART.md (quick start)
+
+2. Verify installation:
+   ./run.sh verify
+
+3. Contact team members
+
+4. Check error logs:
+   python recog/main.py 2>&1 | tee debug.log
+
+================================================================================
+📊 SYSTEM REQUIREMENTS
+================================================================================
+
+Minimum:
+- Python 3.8+
+- 4GB RAM
+- Webcam (or video file)
+- 200MB disk space
+
+Recommended:
+- Python 3.10+
+- 8GB RAM
+- HD webcam
+- SSD drive
+
+Supported operating systems:
+- macOS 10.13+
+- Windows 10+
+- Ubuntu 20.04+ / Debian 10+
+
+================================================================================
+🎓 ADDITIONAL LEARNING RESOURCES
+================================================================================
+
+If you want to learn more about the technical details:
+
+- OpenCV documentation: https://docs.opencv.org/
+- YuNet paper: Face detection algorithm
+- SFace paper: Face recognition algorithm
+- Multi-object tracking: SORT/DeepSORT algorithms
+
+Key technologies in this project:
+- Computer Vision
+- Face Detection
+- Face Recognition
+- Object Tracking
+- Feature Extraction
+- Cosine Similarity
+
+================================================================================
+
+Last updated: 2025-12-03
+For questions or suggestions, contact the project team
+
+Happy coding! 🎉
+
+================================================================================
