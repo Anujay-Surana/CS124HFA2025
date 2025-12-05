@@ -1,10 +1,16 @@
-# === Core dependencies ===
-opencv-python>=4.8.0
+# requirements.txt
+
 opencv-contrib-python>=4.8.0
+
 numpy>=1.26.0
-
-# === Utility ===
 imutils>=0.5.4
+Pillow>=9.0.0
 
-# === Optional (safe to keep) ===
-# json and time are built-in, no need to install
+torch==2.3.0+cpu
+torchvision==0.18.0+cpu
+
+# === Optional but recommended ===
+# tqdm - nice progress bars (used in some examples)
+# matplotlib - if you want to visualize features later
+# tqdm
+# matplotlib
