@@ -58,7 +58,7 @@ def run(source=0):
     )
 
     # 6. Open video source
-    cap = cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION)
+    cap = cv2.VideoCapture(source)
     frame_idx = 0
     print("Face Recognition System Started")
     print("Press 'q' to quit")
