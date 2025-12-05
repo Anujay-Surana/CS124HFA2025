@@ -1,4 +1,19 @@
 # main.py
+
+# Configurations
+# Live webcam
+# python main.py
+
+# Webcam + record
+## python main.py --record
+
+# Process video file
+# python main.py --source videos/myvideo.mp4
+
+# Full demo: process video, record output, and generate person clips
+# python main.py --source input.mp4 --record --make-person-videos --person-fps 12
+#
+
 import os
 import cv2
 import numpy as np
