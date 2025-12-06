@@ -1,0 +1,24 @@
+======================================================================
+FACE TRACKING HEATMAP ANALYSIS REPORT
+======================================================================
+
+Generated: 2025-12-05 18:32:58
+
+Total Frames Processed: 745
+Total Face Detections: 744
+Unique Persons Tracked: 1
+Average Detections per Frame: 1.00
+
+----------------------------------------------------------------------
+PER-PERSON STATISTICS
+----------------------------------------------------------------------
+
+Person 1:
+  First Seen: Frame 1
+  Last Seen: Frame 745
+  Total Frames Visible: 744
+  Visibility: 99.9%
+  Average Face Size: 65013 px²
+  Total Distance Traveled: 10547 px
+
+======================================================================
