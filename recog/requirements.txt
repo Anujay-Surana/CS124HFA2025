@@ -1,13 +1,13 @@
 # requirements.txt
 
-opencv-contrib-python>=4.8.0
+opencv-contrib-python
 
-numpy>=1.26.0
-imutils>=0.5.4
-Pillow>=9.0.0
+numpy
+imutils
+Pillow
 
-torch==2.3.0+cpu
-torchvision==0.18.0+cpu
+torch
+torchvision
 
 # === Optional but recommended ===
 # tqdm - nice progress bars (used in some examples)
