@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Recognition Analytics Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .heatmap-panel, .persons-panel {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .heatmap-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #e0e7ff;
+            color: #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #c7d2fe;
+        }
+
+        #heatmapImage {
+            width: 100%;
+            height: auto;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .person-card {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .person-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .person-id {
+            font-weight: bold;
+            font-size: 16px;
+            color: #667eea;
+        }
+
+        .person-stat {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .person-stat strong {
+            color: #333;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .badge-active {
+            background: #10b981;
+            color: white;
+        }
+
+        .badge-inactive {
+            background: #ef4444;
+            color: white;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+
+        .refresh-info {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        footer {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Face Recognition Analytics Dashboard</h1>
+            <p class="subtitle">Real-time crowd analytics and heat map visualization</p>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="uniquePersons">-</div>
+                <div class="stat-label">Unique Persons</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalFrames">-</div>
+                <div class="stat-label">Total Frames</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="avgDwellTime">-</div>
+                <div class="stat-label">Avg Dwell Time (s)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalVisits">-</div>
+                <div class="stat-label">Total Visits</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="heatmap-panel">
+                <div class="panel-title">
+                    <span>Movement Heat Map</span>
+                    <div class="heatmap-controls">
+                        <button class="btn btn-primary" onclick="changeHeatmapType('movement')">Movement</button>
+                        <button class="btn btn-secondary" onclick="changeHeatmapType('density')">Density</button>
+                        <button class="btn btn-secondary" onclick="refreshHeatmap()">Refresh</button>
+                    </div>
+                </div>
+                <img id="heatmapImage" src="" alt="Heat map loading...">
+                <div class="refresh-info" id="heatmapInfo">Auto-refreshing every 5 seconds...</div>
+            </div>
+
+            <div class="persons-panel">
+                <div class="panel-title">
+                    <span>Detected Persons</span>
+                    <span class="badge badge-active" id="personCount">0</span>
+                </div>
+                <div id="personsList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading data...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            CS124 Honors Project - Face Recognition Analytics System
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        let currentHeatmapType = 'movement';
+        let autoRefreshInterval;
+
+        // Fetch live statistics
+        async function fetchLiveStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats/live`);
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('uniquePersons').textContent = data.data.unique_persons;
+                    document.getElementById('totalFrames').textContent = data.data.total_frames.toLocaleString();
+                    document.getElementById('avgDwellTime').textContent = data.data.average_dwell_time.toFixed(1);
+                    document.getElementById('totalVisits').textContent = data.data.total_visits;
+                }
+            } catch (error) {
+                console.error('Error fetching live stats:', error);
+            }
+        }
+
+        // Fetch persons list
+        async function fetchPersons() {
+            try {
+                const response = await fetch(`${API_BASE}/api/analytics/persons`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const personsList = document.getElementById('personsList');
+                    document.getElementById('personCount').textContent = data.count;
+
+                    if (data.data.length === 0) {
+                        personsList.innerHTML = '<div class="loading">No persons detected yet</div>';
+                        return;
+                    }
+
+                    personsList.innerHTML = data.data.map(person => `
+                        <div class="person-card">
+                            <div class="person-header">
+                                <span class="person-id">Person ${person.id}</span>
+                                <span class="badge ${person.session_count > 0 ? 'badge-active' : 'badge-inactive'}">
+                                    ${person.session_count} sessions
+                                </span>
+                            </div>
+                            <div class="person-stat">
+                                <span>Dwell Time:</span>
+                                <strong>${person.dwell_time_seconds.toFixed(1)}s</strong>
+                            </div>
+                            <div class="person-stat">
+                                <span>Visits:</span>
+                                <strong>${person.visit_count}</strong>
+                            </div>
+                            <div class="person-stat">
+                                <span>First Seen:</span>
+                                <strong>${new Date(person.first_seen).toLocaleTimeString()}</strong>
+                            </div>
+                            <div class="person-stat">
+                                <span>Last Seen:</span>
+                                <strong>${new Date(person.last_seen).toLocaleTimeString()}</strong>
+                            </div>
+                            <div class="person-stat">
+                                <span>Images Captured:</span>
+                                <strong>${person.image_count}</strong>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error fetching persons:', error);
+                document.getElementById('personsList').innerHTML =
+                    '<div class="error">Failed to load persons data. Make sure the API server is running.</div>';
+            }
+        }
+
+        // Change heatmap type
+        function changeHeatmapType(type) {
+            currentHeatmapType = type;
+            refreshHeatmap();
+
+            // Update button styles
+            document.querySelectorAll('.heatmap-controls .btn').forEach(btn => {
+                btn.className = 'btn btn-secondary';
+            });
+            event.target.className = 'btn btn-primary';
+        }
+
+        // Refresh heatmap
+        function refreshHeatmap() {
+            const timestamp = new Date().getTime();
+            document.getElementById('heatmapImage').src =
+                `${API_BASE}/api/analytics/heatmap/image?type=${currentHeatmapType}&t=${timestamp}`;
+
+            const typeLabel = currentHeatmapType.charAt(0).toUpperCase() + currentHeatmapType.slice(1);
+            document.getElementById('heatmapInfo').textContent =
+                `${typeLabel} heat map - Last updated: ${new Date().toLocaleTimeString()}`;
+        }
+
+        // Initialize dashboard
+        async function initDashboard() {
+            // Initial load
+            await fetchLiveStats();
+            await fetchPersons();
+            refreshHeatmap();
+
+            // Set up auto-refresh
+            setInterval(fetchLiveStats, 2000);  // Stats every 2 seconds
+            setInterval(fetchPersons, 3000);     // Persons every 3 seconds
+            setInterval(refreshHeatmap, 5000);   // Heatmap every 5 seconds
+        }
+
+        // Start dashboard when page loads
+        window.addEventListener('load', initDashboard);
+    </script>
+</body>
+</html>
