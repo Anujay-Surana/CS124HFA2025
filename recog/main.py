@@ -109,12 +109,17 @@ def run(source=0, save_video=False, output_video_name=None):
     if isinstance(source, str) and os.path.isfile(source):
         print(f"Opening video file: {source}")
     else:
-        source = 0
-        print("Opening default webcam (source=0)")
+        source = 1  # Use camera 1 (MacBook webcam) instead of 0 (iPhone)
+        print("Opening default webcam (source=1)")
 
-    cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+    # Try to open video source (don't use CAP_DSHOW on macOS/Linux)
+    cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         print("ERROR: Cannot open video source!")
+        print("Troubleshooting tips:")
+        print("  1. Check camera permissions in System Preferences > Security & Privacy > Camera")
+        print("  2. Make sure no other app is using the camera")
+        print("  3. Try a different camera index: python main.py --source 1")
         return
 
     fps_in = cap.get(cv2.CAP_PROP_FPS)
@@ -207,46 +212,56 @@ def run(source=0, save_video=False, output_video_name=None):
 
             # Save best face crops (every 5 frames)
             if frame_idx % 5 == 0:
-                pdir = ensure_person_dir(OUTPUT_DIR, pid)
-                crop = frame[y:y+h, x:x+w]
-                if crop.size == 0:
+                try:
+                    pdir = ensure_person_dir(OUTPUT_DIR, pid)
+                    crop = frame[y:y+h, x:x+w]
+                    if crop.size == 0:
+                        continue
+
+                    # Quality score
+                    area = w * h
+                    # Safely find confidence score
+                    conf = 0.5
+                    for i, r in enumerate(rects):
+                        if r == (x, y, w, h) and i < len(face_scores):
+                            conf = face_scores[i]
+                            break
+
+                    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    quality = 0.4 * (area / (w * h * 100)) + 0.3 * conf + 0.3 * min(sharpness / 500.0, 1.0)
+
+                    meta_path = os.path.join(pdir, "metadata.json")
+                    existing = []
+                    if os.path.exists(meta_path):
+                        try:
+                            with open(meta_path, "r", encoding="utf-8") as f:
+                                existing = json.load(f)
+                        except:
+                            existing = []
+
+                    if len(existing) < 10:
+                        img_path = os.path.join(pdir, f"{frame_idx:06d}.jpg")
+                        cv2.imwrite(img_path, crop)
+                        append_metadata(pdir, {"time": now_ts(), "frame": frame_idx, "bbox": [x,y,w,h], "quality_score": quality})
+                    else:
+                        worst_idx = min(range(len(existing)), key=lambda i: existing[i].get("quality_score", 0))
+                        if quality > existing[worst_idx].get("quality_score", 0):
+                            old_frame = existing[worst_idx]["frame"]
+                            old_path = os.path.join(pdir, f"{old_frame:06d}.jpg")
+                            if os.path.exists(old_path):
+                                os.remove(old_path)
+                            new_path = os.path.join(pdir, f"{frame_idx:06d}.jpg")
+                            cv2.imwrite(new_path, crop)
+                            existing[worst_idx] = {"time": now_ts(), "frame": frame_idx, "bbox": [x,y,w,h], "quality_score": quality}
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(existing, f, indent=2, ensure_ascii=False)
+
+                    if pid in ct.features and ct.features[pid] is not None:
+                        save_person_feature(pdir, ct.features[pid])
+                except Exception as e:
+                    print(f"Warning: Could not save face crop for person {pid}: {e}")
                     continue
-
-                # Quality score
-                area = w * h
-                conf = face_scores[[i for i, r in enumerate(rects) if r == (x,y,w,h)][0]] if any(r == (x,y,w,h) for r in rects) else 0.5
-                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-                sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-                quality = 0.4 * (area / (w * h * 100)) + 0.3 * conf + 0.3 * min(sharpness / 500.0, 1.0)
-
-                meta_path = os.path.join(pdir, "metadata.json")
-                existing = []
-                if os.path.exists(meta_path):
-                    try:
-                        with open(meta_path, "r", encoding="utf-8") as f:
-                            existing = json.load(f)
-                    except:
-                        existing = []
-
-                if len(existing) < 10:
-                    img_path = os.path.join(pdir, f"{frame_idx:06d}.jpg")
-                    cv2.imwrite(img_path, crop)
-                    append_metadata(pdir, {"time": now_ts(), "frame": frame_idx, "bbox": [x,y,w,h], "quality_score": quality})
-                else:
-                    worst_idx = min(range(len(existing)), key=lambda i: existing[i].get("quality_score", 0))
-                    if quality > existing[worst_idx].get("quality_score", 0):
-                        old_frame = existing[worst_idx]["frame"]
-                        old_path = os.path.join(pdir, f"{old_frame:06d}.jpg")
-                        if os.path.exists(old_path):
-                            os.remove(old_path)
-                        new_path = os.path.join(pdir, f"{frame_idx:06d}.jpg")
-                        cv2.imwrite(new_path, crop)
-                        existing[worst_idx] = {"time": now_ts(), "frame": frame_idx, "bbox": [x,y,w,h], "quality_score": quality}
-                        with open(meta_path, "w", encoding="utf-8") as f:
-                            json.dump(existing, f, indent=2, ensure_ascii=False)
-
-                if pid in ct.features and ct.features[pid] is not None:
-                    save_person_feature(pdir, ct.features[pid])
 
         # === Info Overlay ===
         info = f"Frame: {frame_idx} | Tracked: {visible_count} | Detections: {len(rects)}"
