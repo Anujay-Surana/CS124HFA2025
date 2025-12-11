@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Recognition Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .filters {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .filters h2 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .filter-group label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .filter-group input,
+        .filter-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .chart-card h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .persons-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .person-card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .person-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+
+        .person-thumbnail {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: #f0f0f0;
+        }
+
+        .person-info {
+            padding: 20px;
+        }
+
+        .person-id {
+            font-size: 20px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .person-detail {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+
+        .person-detail .label {
+            color: #666;
+        }
+
+        .person-detail .value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .quality-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .quality-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f44336 0%, #ff9800 50%, #4caf50 100%);
+            transition: width 0.3s;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .no-data {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Face Recognition Dashboard</h1>
+            <p class="subtitle">Real-time tracking and analytics for detected persons</p>
+        </header>
+
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-label">Total Persons</div>
+                <div class="stat-value" id="totalPersons">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Detections</div>
+                <div class="stat-value" id="totalDetections">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Quality Score</div>
+                <div class="stat-value" id="avgQuality">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">With Face Features</div>
+                <div class="stat-value" id="withFeatures">-</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <h2>Filters</h2>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>Min Quality Score</label>
+                    <input type="number" id="minQuality" min="0" max="1" step="0.1" placeholder="0.0 - 1.0">
+                </div>
+                <div class="filter-group">
+                    <label>Min Detections</label>
+                    <input type="number" id="minDetections" min="1" placeholder="e.g. 5">
+                </div>
+                <div class="filter-group">
+                    <label>Has Feature Vector</label>
+                    <select id="hasFeature">
+                        <option value="">All</option>
+                        <option value="true">Yes</option>
+                        <option value="false">No</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <button onclick="applyFilters()">Apply Filters</button>
+                </div>
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <button onclick="resetFilters()" style="background: #666;">Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>Quality Distribution</h3>
+                <canvas id="qualityChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Detection Count Distribution</h3>
+                <canvas id="detectionChart"></canvas>
+            </div>
+        </div>
+
+        <div id="personsContainer">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+
+    <script>
+        let qualityChart, detectionChart;
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalPersons').textContent = stats.total_persons;
+                document.getElementById('totalDetections').textContent = stats.total_detections;
+                document.getElementById('avgQuality').textContent = stats.avg_quality.toFixed(3);
+                document.getElementById('withFeatures').textContent = stats.persons_with_features;
+
+                // Update charts
+                updateQualityChart(stats.quality_distribution);
+                updateDetectionChart(stats.detection_distribution);
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        function updateQualityChart(data) {
+            const ctx = document.getElementById('qualityChart').getContext('2d');
+
+            if (qualityChart) {
+                qualityChart.destroy();
+            }
+
+            qualityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(data),
+                    datasets: [{
+                        label: 'Number of Persons',
+                        data: Object.values(data),
+                        backgroundColor: [
+                            'rgba(244, 67, 54, 0.7)',
+                            'rgba(255, 152, 0, 0.7)',
+                            'rgba(255, 235, 59, 0.7)',
+                            'rgba(139, 195, 74, 0.7)',
+                            'rgba(76, 175, 80, 0.7)'
+                        ],
+                        borderColor: [
+                            'rgba(244, 67, 54, 1)',
+                            'rgba(255, 152, 0, 1)',
+                            'rgba(255, 235, 59, 1)',
+                            'rgba(139, 195, 74, 1)',
+                            'rgba(76, 175, 80, 1)'
+                        ],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateDetectionChart(data) {
+            const ctx = document.getElementById('detectionChart').getContext('2d');
+
+            if (detectionChart) {
+                detectionChart.destroy();
+            }
+
+            detectionChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(data),
+                    datasets: [{
+                        data: Object.values(data),
+                        backgroundColor: [
+                            'rgba(102, 126, 234, 0.7)',
+                            'rgba(118, 75, 162, 0.7)',
+                            'rgba(237, 100, 166, 0.7)',
+                            'rgba(255, 154, 158, 0.7)',
+                            'rgba(250, 208, 196, 0.7)'
+                        ],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadPersons(filters = {}) {
+            try {
+                const queryParams = new URLSearchParams(filters).toString();
+                const response = await fetch(`/api/persons?${queryParams}`);
+                const persons = await response.json();
+
+                const container = document.getElementById('personsContainer');
+
+                if (persons.length === 0) {
+                    container.innerHTML = '<div class="no-data">No persons found. Run the face recognition system to collect data.</div>';
+                    return;
+                }
+
+                container.innerHTML = '<div class="persons-grid">' +
+                    persons.map(person => `
+                        <div class="person-card">
+                            ${person.thumbnail ?
+                                `<img src="data:image/jpeg;base64,${person.thumbnail}" alt="Person ${person.id}" class="person-thumbnail">` :
+                                '<div class="person-thumbnail"></div>'
+                            }
+                            <div class="person-info">
+                                <div class="person-id">Person ${String(person.id).padStart(3, '0')}</div>
+                                <div class="person-detail">
+                                    <span class="label">Detections:</span>
+                                    <span class="value">${person.total_detections}</span>
+                                </div>
+                                <div class="person-detail">
+                                    <span class="label">Images Saved:</span>
+                                    <span class="value">${person.image_count}</span>
+                                </div>
+                                <div class="person-detail">
+                                    <span class="label">Avg Quality:</span>
+                                    <span class="value">${person.avg_quality.toFixed(3)}</span>
+                                </div>
+                                <div class="quality-bar">
+                                    <div class="quality-fill" style="width: ${person.avg_quality * 100}%"></div>
+                                </div>
+                                <div class="person-detail">
+                                    <span class="label">First Seen:</span>
+                                    <span class="value">${person.first_seen}</span>
+                                </div>
+                                <div class="person-detail">
+                                    <span class="label">Last Seen:</span>
+                                    <span class="value">${person.last_seen}</span>
+                                </div>
+                                <div class="person-detail">
+                                    <span class="label">Feature Vector:</span>
+                                    <span class="value">
+                                        ${person.has_feature ?
+                                            '<span class="badge badge-success">✓ Saved</span>' :
+                                            '<span class="badge badge-warning">✗ None</span>'
+                                        }
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('') +
+                    '</div>';
+            } catch (error) {
+                console.error('Error loading persons:', error);
+                document.getElementById('personsContainer').innerHTML =
+                    '<div class="no-data">Error loading data. Make sure the dashboard server is running.</div>';
+            }
+        }
+
+        function applyFilters() {
+            const filters = {};
+
+            const minQuality = document.getElementById('minQuality').value;
+            const minDetections = document.getElementById('minDetections').value;
+            const hasFeature = document.getElementById('hasFeature').value;
+
+            if (minQuality) filters.min_quality = minQuality;
+            if (minDetections) filters.min_detections = minDetections;
+            if (hasFeature) filters.has_feature = hasFeature;
+
+            loadPersons(filters);
+        }
+
+        function resetFilters() {
+            document.getElementById('minQuality').value = '';
+            document.getElementById('minDetections').value = '';
+            document.getElementById('hasFeature').value = '';
+            loadPersons();
+        }
+
+        // Load data on page load
+        window.onload = function() {
+            loadStats();
+            loadPersons();
+
+            // Auto-refresh every 5 seconds
+            setInterval(() => {
+                loadStats();
+                loadPersons();
+            }, 5000);
+        };
+    </script>
+</body>
+</html>
